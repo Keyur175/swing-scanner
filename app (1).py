@@ -191,10 +191,25 @@ def detect_swing(df, symbol):
     fno_tag = ("🔥 STRONG F&O" if fs>=7 else "⚡ F&O POSSIBLE" if fs>=4 else "📋 F&O") if is_fno else ""
 
     direction = "BULL" if bull else "BEAR"
-    sl  = round(c-1.5*atr,2) if bull else round(c+1.5*atr,2)
-    t1  = round(c+2*atr,2)   if bull else round(c-2*atr,2)
-    t2  = round(c+3.5*atr,2) if bull else round(c-3.5*atr,2)
-    risk= abs(c-sl)
+
+    # SL: use recent swing low/high (last 10 days) instead of pure ATR
+    recent_low  = float(df["Low"].iloc[-10:].min())
+    recent_high = float(df["High"].iloc[-10:].max())
+
+    if bull:
+        sl = round(recent_low - 0.25 * atr, 2)
+        # Cap SL at 7% max risk
+        if (c - sl) / c > 0.07: sl = round(c * 0.93, 2)
+    else:
+        sl = round(recent_high + 0.25 * atr, 2)
+        if (sl - c) / c > 0.07: sl = round(c * 1.07, 2)
+
+    risk = abs(c - sl)
+    if risk <= 0: return None
+
+    # Targets: minimum 2R and 3R
+    t1  = round(c + 2 * risk, 2) if bull else round(c - 2 * risk, 2)
+    t2  = round(c + 3 * risk, 2) if bull else round(c - 3 * risk, 2)
 
     return dict(symbol=symbol, price=round(c,2),
                 setups=" + ".join(setups), setup_type="swing",
@@ -308,10 +323,31 @@ def detect_vcp(df, symbol):
 
     tr  = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
     atr = float(tr.rolling(14).mean().iloc[-1])
-    sl  = round(last_pb["trough"]-0.5*atr,2)
-    risk= abs(price-sl)
-    t1  = round(pivot+last_pb["depth_pct"]/100*pivot,2)
-    t2  = round(pivot+2*last_pb["depth_pct"]/100*pivot,2)
+
+    # SL = just below the LAST (tightest) contraction low + 0.25x ATR buffer only
+    # NOT the full trough — use recent 10-day low as tighter SL
+    recent_low = float(l.iloc[-10:].min())
+    sl = round(min(last_pb["trough"], recent_low) - 0.25 * atr, 2)
+
+    # If SL is more than 8% away — use 8% max to keep risk reasonable
+    max_sl_pct = 0.08
+    if (price - sl) / price > max_sl_pct:
+        sl = round(price * (1 - max_sl_pct), 2)
+
+    risk = abs(price - sl)
+    if risk <= 0: return None
+
+    # Target = measured move from base (full base depth projected from pivot)
+    # Minervini method: target = pivot + (base height)
+    base_height = max(p["depth_pct"] for p in pbs) / 100 * pivot
+    t1 = round(pivot + base_height * 0.75, 2)   # 75% of base move = T1
+    t2 = round(pivot + base_height * 1.5,  2)   # 150% of base move = T2
+
+    # Ensure minimum 2:1 R:R on T1
+    min_t1 = round(price + 2 * risk, 2)
+    if t1 < min_t1: t1 = min_t1
+    min_t2 = round(price + 3 * risk, 2)
+    if t2 < min_t2: t2 = min_t2
 
     is_fno  = symbol in FNO_SET
     fno_tag = ""
