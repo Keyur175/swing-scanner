@@ -415,6 +415,24 @@ def scan_symbol(symbol):
 st.markdown('<div class="header">SWING SCANNER</div>', unsafe_allow_html=True)
 st.markdown('<div class="subhead">Nifty 500 + F&O  •  EOD  •  Trend + Breakout + Pullback + VCP</div>', unsafe_allow_html=True)
 
+# ── Data freshness check ──
+import datetime as dt
+try:
+    _test = yf.download("RELIANCE.NS",
+                        start=(dt.date.today()-dt.timedelta(days=7)).strftime("%Y-%m-%d"),
+                        end=(dt.date.today()+dt.timedelta(days=1)).strftime("%Y-%m-%d"),
+                        interval="1d", progress=False, auto_adjust=True, actions=False)
+    if not _test.empty:
+        _last = pd.to_datetime(_test.index[-1]).date()
+        _today = dt.date.today()
+        _days  = (_today - _last).days
+        if _days <= 1:
+            st.success(f"✅ Data is fresh — latest: {_last} ({_days} day old)")
+        else:
+            st.warning(f"⚠️ Data may be delayed — latest: {_last} ({_days} days old). Try scanning after 6 PM.")
+except:
+    st.warning("Could not verify data freshness")
+
 if "signals"   not in st.session_state: st.session_state.signals   = []
 if "scanned"   not in st.session_state: st.session_state.scanned   = False
 if "last_scan" not in st.session_state: st.session_state.last_scan = ""
