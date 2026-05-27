@@ -335,14 +335,27 @@ def detect_vcp(df, symbol):
 # ─────────────────────────────────────────────────────────────
 #  SCAN ONE STOCK
 # ─────────────────────────────────────────────────────────────
+def clean_df(df):
+    """Flatten yfinance multi-level columns and ensure clean numeric data."""
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    # Keep only OHLCV columns
+    needed = ["Open","High","Low","Close","Volume"]
+    df = df[[c for c in needed if c in df.columns]]
+    # Convert all to numeric, drop rows with NaN close
+    for col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["Close"])
+    df.index = pd.to_datetime(df.index)
+    return df
+
 def scan_symbol(symbol):
     try:
-        df = yf.download(f"{symbol}.NS", period="2y", interval="1d",
-                         progress=False, auto_adjust=True)
-        if df.empty or len(df)<220: return []
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df.index = pd.to_datetime(df.index)
+        raw = yf.download(f"{symbol}.NS", period="2y", interval="1d",
+                          progress=False, auto_adjust=True)
+        if raw.empty: return []
+        df = clean_df(raw)
+        if len(df) < 220: return []
 
         results = []
 
