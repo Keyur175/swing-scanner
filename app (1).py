@@ -373,9 +373,15 @@ def clean_df(df):
 
 def scan_symbol(symbol):
     try:
+        import datetime as dt
+        today = dt.date.today()
+        start = today - dt.timedelta(days=730)   # 2 years back
+        end   = today + dt.timedelta(days=1)      # tomorrow = ensures today included
+
         raw = yf.download(
             f"{symbol}.NS",
-            period="2y",
+            start=start.strftime("%Y-%m-%d"),
+            end=end.strftime("%Y-%m-%d"),
             interval="1d",
             progress=False,
             auto_adjust=True,
@@ -385,12 +391,10 @@ def scan_symbol(symbol):
         df = clean_df(raw)
         if len(df) < 220: return []
 
-        # Verify latest data is recent (within last 3 trading days)
+        # Show what date we got — skip only if older than 4 days
         last_date = df.index[-1].date()
-        today     = pd.Timestamp.now(tz="Asia/Kolkata").date()
         days_old  = (today - last_date).days
-        if days_old > 5:  # skip if data is stale
-            return []
+        if days_old > 4: return []
 
         results = []
         df_ind = compute_indicators(df.copy())
