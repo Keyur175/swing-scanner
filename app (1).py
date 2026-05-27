@@ -138,47 +138,60 @@ def detect_swing(df, symbol):
     h52  = float(row["high52"]); l52 = float(row["low52"])
     prsi = float(prev["rsi"]);  pmh  = float(prev["macd_hist"])
 
-    setups = []; score = 0
+def detect_swing(df, symbol):
+    if len(df) < 220: return None
+    row  = df.iloc[-1]; prev = df.iloc[-2]
+    c    = float(row["Close"])
+    rsi  = float(row["rsi"]);   mh   = float(row["macd_hist"])
+    adx  = float(row["adx"]);   atr  = float(row["atr"])
+    e20  = float(row["ema20"]); e50  = float(row["ema50"])
+    e200 = float(row["ema200"]); sig = float(row["signal"])
+    macd = float(row["macd"]);  vr   = float(row["vol_ratio"])
+    h52  = float(row["high52"]); l52 = float(row["low52"])
+    prsi = float(prev["rsi"]);  pmh  = float(prev["macd_hist"])
 
-    # Trend
-    if c>e20>e50>e200 and adx>25 and 50<rsi<75 and macd>sig:
-        setups.append("TREND_BULL"); score+=3
-    if c<e20<e50<e200 and adx>25 and 25<rsi<50 and macd<sig:
-        setups.append("TREND_BEAR"); score+=3
+    # ── Each setup requires ALL its conditions to be true ──
+    setups = []
 
-    # Breakout
-    if c>=h52*0.98 and vr>1.5 and rsi>55 and adx>20:
-        setups.append("BREAKOUT_BULL"); score+=4
-    if c<=l52*1.02 and vr>1.5 and rsi<45 and adx>20:
-        setups.append("BREAKOUT_BEAR"); score+=4
+    # TREND: full EMA alignment + ADX + RSI + MACD all must agree
+    if c>e20>e50>e200 and adx>25 and 50<rsi<75 and macd>sig and mh>0:
+        setups.append("TREND_BULL")
+    if c<e20<e50<e200 and adx>25 and 25<rsi<50 and macd<sig and mh<0:
+        setups.append("TREND_BEAR")
 
-    # Pullback
+    # BREAKOUT: price + volume + RSI + ADX all must agree
+    if c>=h52*0.98 and vr>1.5 and rsi>55 and adx>20 and macd>sig:
+        setups.append("BREAKOUT_BULL")
+    if c<=l52*1.02 and vr>1.5 and rsi<45 and adx>20 and macd<sig:
+        setups.append("BREAKOUT_BEAR")
+
+    # PULLBACK: trend + near EMA + RSI turning + MACD histogram turning
     in_up = e20>e50>e200; in_dn = e20<e50<e200
-    n20 = abs(c-e20)/e20<0.02; n50 = abs(c-e50)/e50<0.02
-    if in_up and (n20 or n50) and rsi>prsi and rsi>45 and mh>pmh:
-        setups.append("PULLBACK_BULL"); score+=3
-    if in_dn and (n20 or n50) and rsi<prsi and rsi<55 and mh<pmh:
-        setups.append("PULLBACK_BEAR"); score+=3
+    n20   = abs(c-e20)/e20<0.02; n50 = abs(c-e50)/e50<0.02
+    if in_up and (n20 or n50) and rsi>prsi and rsi>45 and mh>pmh and mh>0:
+        setups.append("PULLBACK_BULL")
+    if in_dn and (n20 or n50) and rsi<prsi and rsi<55 and mh<pmh and mh<0:
+        setups.append("PULLBACK_BEAR")
 
     if not setups: return None
 
-    # Indicator score
     bull = any("BULL" in s for s in setups)
-    ind  = 0
-    if bull:
-        if 50<rsi<70: ind+=2
-        elif rsi>=70: ind+=1
-    else:
-        if 30<rsi<50: ind+=2
-        elif rsi<=30: ind+=1
-    if mh>0 and bull: ind+=2
-    if mh<0 and not bull: ind+=2
-    if adx>30: ind+=2
-    elif adx>20: ind+=1
-    if vr>2: ind+=2
-    elif vr>1.5: ind+=1
-    if (c>e20>e50>e200) or (c<e20<e50<e200): ind+=2
+
+    # ── Confidence score — how many extra indicators confirm ──
+    ind = 0
+    if c>e20>e50>e200 and bull:     ind += 2
+    if c<e20<e50<e200 and not bull: ind += 2
+    if adx > 30:   ind += 2
+    elif adx > 25: ind += 1
+    if mh > 0 and bull:     ind += 2
+    if mh < 0 and not bull: ind += 2
+    if 55 < rsi < 70 and bull:  ind += 1
+    if 30 < rsi < 45 and not bull: ind += 1
+    if vr > 2.0: ind += 1
     ind = min(ind, 10)
+
+    # Only show high confidence signals
+    if ind < 5: return None
 
     # F&O tag
     is_fno = symbol in FNO_SET; fs=0; fr=[]
@@ -191,25 +204,13 @@ def detect_swing(df, symbol):
     fno_tag = ("🔥 STRONG F&O" if fs>=7 else "⚡ F&O POSSIBLE" if fs>=4 else "📋 F&O") if is_fno else ""
 
     direction = "BULL" if bull else "BEAR"
-
-    # SL: use recent swing low/high (last 10 days) instead of pure ATR
     recent_low  = float(df["Low"].iloc[-10:].min())
     recent_high = float(df["High"].iloc[-10:].max())
-
-    if bull:
-        sl = round(recent_low - 0.25 * atr, 2)
-        # Cap SL at 7% max risk
-        if (c - sl) / c > 0.07: sl = round(c * 0.93, 2)
-    else:
-        sl = round(recent_high + 0.25 * atr, 2)
-        if (sl - c) / c > 0.07: sl = round(c * 1.07, 2)
-
+    sl   = round(recent_low - 0.25*atr, 2) if bull else round(recent_high + 0.25*atr, 2)
     risk = abs(c - sl)
     if risk <= 0: return None
-
-    # Targets: minimum 2R and 3R
-    t1  = round(c + 2 * risk, 2) if bull else round(c - 2 * risk, 2)
-    t2  = round(c + 3 * risk, 2) if bull else round(c - 3 * risk, 2)
+    t1 = round(c + 2*atr, 2) if bull else round(c - 2*atr, 2)
+    t2 = round(c + 4*atr, 2) if bull else round(c - 4*atr, 2)
 
     return dict(symbol=symbol, price=round(c,2),
                 setups=" + ".join(setups), setup_type="swing",
@@ -324,30 +325,15 @@ def detect_vcp(df, symbol):
     tr  = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
     atr = float(tr.rolling(14).mean().iloc[-1])
 
-    # SL = just below the LAST (tightest) contraction low + 0.25x ATR buffer only
-    # NOT the full trough — use recent 10-day low as tighter SL
-    recent_low = float(l.iloc[-10:].min())
-    sl = round(min(last_pb["trough"], recent_low) - 0.25 * atr, 2)
-
-    # If SL is more than 8% away — use 8% max to keep risk reasonable
-    max_sl_pct = 0.08
-    if (price - sl) / price > max_sl_pct:
-        sl = round(price * (1 - max_sl_pct), 2)
-
+    # SL = below the last contraction trough (actual swing low)
+    sl   = round(last_pb["trough"] - 0.25 * atr, 2)
     risk = abs(price - sl)
     if risk <= 0: return None
 
-    # Target = measured move from base (full base depth projected from pivot)
-    # Minervini method: target = pivot + (base height)
+    # Target = measured move (Minervini): base height projected from pivot
     base_height = max(p["depth_pct"] for p in pbs) / 100 * pivot
-    t1 = round(pivot + base_height * 0.75, 2)   # 75% of base move = T1
-    t2 = round(pivot + base_height * 1.5,  2)   # 150% of base move = T2
-
-    # Ensure minimum 2:1 R:R on T1
-    min_t1 = round(price + 2 * risk, 2)
-    if t1 < min_t1: t1 = min_t1
-    min_t2 = round(price + 3 * risk, 2)
-    if t2 < min_t2: t2 = min_t2
+    t1 = round(pivot + base_height * 0.75, 2)   # conservative target
+    t2 = round(pivot + base_height * 1.5,  2)   # full measured move
 
     is_fno  = symbol in FNO_SET
     fno_tag = ""
@@ -387,20 +373,30 @@ def clean_df(df):
 
 def scan_symbol(symbol):
     try:
-        raw = yf.download(f"{symbol}.NS", period="2y", interval="1d",
-                          progress=False, auto_adjust=True)
+        raw = yf.download(
+            f"{symbol}.NS",
+            period="2y",
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            actions=False,
+        )
         if raw.empty: return []
         df = clean_df(raw)
         if len(df) < 220: return []
 
-        results = []
+        # Verify latest data is recent (within last 3 trading days)
+        last_date = df.index[-1].date()
+        today     = pd.Timestamp.now(tz="Asia/Kolkata").date()
+        days_old  = (today - last_date).days
+        if days_old > 5:  # skip if data is stale
+            return []
 
-        # Swing setups
+        results = []
         df_ind = compute_indicators(df.copy())
         r = detect_swing(df_ind, symbol)
         if r: results.append(r)
 
-        # VCP
         v = detect_vcp(df.copy(), symbol)
         if v: results.append(v)
 
